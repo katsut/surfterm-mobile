@@ -8,16 +8,13 @@ import '../models/command.dart';
 import '../models/session.dart';
 import 'chunk_service.dart';
 
-/// Placeholder Surfterm BLE service UUID.
-///
-/// This will be replaced with the real UUID once the desktop BLE server
-/// is fully implemented.
-const String kSurftermServiceUuid = '0000fff0-0000-1000-8000-00805f9b34fb';
+/// Surfterm BLE service UUID (must match Swift helper).
+const String kSurftermServiceUuid = '5572f001-7846-4d32-a1a4-5f7a4e3b6c10';
 
-/// Placeholder characteristic UUIDs.
-const String kSessionListCharUuid = '0000fff1-0000-1000-8000-00805f9b34fb';
-const String kStateNotifyCharUuid = '0000fff2-0000-1000-8000-00805f9b34fb';
-const String kCommandCharUuid = '0000fff3-0000-1000-8000-00805f9b34fb';
+/// Characteristic UUIDs.
+const String kSessionListCharUuid = '5572f002-7846-4d32-a1a4-5f7a4e3b6c10';
+const String kStateNotifyCharUuid = '5572f002-7846-4d32-a1a4-5f7a4e3b6c10'; // same as session list (notify)
+const String kCommandCharUuid = '5572f003-7846-4d32-a1a4-5f7a4e3b6c10';
 
 /// BLE connection state.
 enum BleConnectionState {
@@ -197,7 +194,8 @@ class BleService extends ChangeNotifier {
   }
 
   Future<void> _subscribeToStateChanges() async {
-    final char = _stateNotifyChar;
+    // Session list char has notify — use it for state change subscriptions.
+    final char = _sessionListChar;
     if (char == null) return;
 
     try {
