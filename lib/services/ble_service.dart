@@ -65,11 +65,32 @@ class BleService extends ChangeNotifier {
     debugPrint('BLE: Starting scan...');
     debugPrint('BLE: Bluetooth adapter state: ${FlutterBluePlus.adapterStateNow}');
 
+    // Wait for Bluetooth adapter to be ready
+    if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) {
+      debugPrint('BLE: Waiting for adapter to turn on...');
+      await FlutterBluePlus.adapterState
+          .where((s) => s == BluetoothAdapterState.on)
+          .first
+          .timeout(const Duration(seconds: 10), onTimeout: () {
+        debugPrint('BLE: Adapter timeout - Bluetooth may be off');
+        return BluetoothAdapterState.off;
+      });
+      if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) {
+        debugPrint('BLE: Bluetooth is not available');
+        _connectionState = BleConnectionState.disconnected;
+        notifyListeners();
+        return;
+      }
+      debugPrint('BLE: Adapter is on');
+    }
+
     _scanSubscription = FlutterBluePlus.onScanResults.listen(
       (results) {
         _scanResults = results;
         for (final r in results) {
-          debugPrint('BLE: Found device: ${r.device.platformName} (${r.device.remoteId}) RSSI=${r.rssi}');
+          final services = r.advertisementData.serviceUuids.map((u) => u.toString()).join(', ');
+          final name = r.device.platformName.isNotEmpty ? r.device.platformName : r.advertisementData.advName;
+          debugPrint('BLE: Found: "$name" (${r.device.remoteId}) RSSI=${r.rssi} services=[$services]');
         }
         notifyListeners();
       },

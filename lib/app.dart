@@ -10,7 +10,7 @@ class SurftermApp extends StatelessWidget {
   /// Set to `true` to use [MockBleService] for development.
   final bool useMock;
 
-  const SurftermApp({super.key, this.useMock = true});
+  const SurftermApp({super.key, this.useMock = false});
 
   @override
   Widget build(BuildContext context) {

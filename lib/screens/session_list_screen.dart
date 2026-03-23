@@ -111,6 +111,11 @@ class SessionListScreen extends StatelessWidget {
       child: SessionCard(
         session: session,
         onTap: () {
+          // Switch to this session on Mac
+          ble.sendCommand(
+            BleCommand.switchSession(sessionId: session.id),
+          );
+          // Then open detail screen
           Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => SessionDetailScreen(sessionId: session.id),
