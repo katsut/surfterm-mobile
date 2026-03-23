@@ -62,9 +62,15 @@ class BleService extends ChangeNotifier {
     notifyListeners();
 
     _scanSubscription?.cancel();
+    debugPrint('BLE: Starting scan...');
+    debugPrint('BLE: Bluetooth adapter state: ${FlutterBluePlus.adapterStateNow}');
+
     _scanSubscription = FlutterBluePlus.onScanResults.listen(
       (results) {
         _scanResults = results;
+        for (final r in results) {
+          debugPrint('BLE: Found device: ${r.device.platformName} (${r.device.remoteId}) RSSI=${r.rssi}');
+        }
         notifyListeners();
       },
       onError: (Object error) {
@@ -73,10 +79,10 @@ class BleService extends ChangeNotifier {
     );
 
     await FlutterBluePlus.startScan(
-      withServices: [Guid(kSurftermServiceUuid)],
-      timeout: const Duration(seconds: 10),
+      timeout: const Duration(seconds: 15),
     );
 
+    debugPrint('BLE: Scan complete. Found ${_scanResults.length} devices.');
     _connectionState = _connectedDevice != null
         ? BleConnectionState.connected
         : BleConnectionState.disconnected;
