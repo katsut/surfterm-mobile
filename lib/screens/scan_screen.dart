@@ -6,12 +6,32 @@ import '../theme/catppuccin.dart';
 import 'session_list_screen.dart';
 
 /// BLE device scanning screen.
-class ScanScreen extends StatelessWidget {
+class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
+
+  @override
+  State<ScanScreen> createState() => _ScanScreenState();
+}
+
+class _ScanScreenState extends State<ScanScreen> {
+  bool _hasScanned = false;
 
   @override
   Widget build(BuildContext context) {
     final ble = context.watch<BleService>();
+
+    // Navigate to session list when connected
+    if (ble.isConnected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute<void>(
+              builder: (_) => const SessionListScreen(),
+            ),
+          );
+        }
+      });
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Surfterm')),
@@ -23,45 +43,23 @@ class ScanScreen extends StatelessWidget {
             _buildStatusCard(ble),
             const SizedBox(height: 16),
 
-            // Scan / Mock connect buttons
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: ble.connectionState ==
-                            BleConnectionState.scanning
-                        ? null
-                        : () => ble.scanForDevices(),
-                    icon: const Icon(Icons.bluetooth_searching),
-                    label: Text(
-                      ble.connectionState == BleConnectionState.scanning
-                          ? 'Scanning...'
-                          : 'Scan for Surfterm',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (ble is MockBleService)
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: () async {
-                        await ble.connectMock();
-                        if (context.mounted) {
-                          Navigator.of(context).pushReplacement(
-                            MaterialPageRoute<void>(
-                              builder: (_) => const SessionListScreen(),
-                            ),
-                          );
-                        }
+            // Scan button
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: ble.connectionState == BleConnectionState.scanning
+                    ? null
+                    : () async {
+                        await ble.scanForDevices();
+                        if (mounted) setState(() => _hasScanned = true);
                       },
-                      icon: const Icon(Icons.bug_report),
-                      label: const Text('Mock Connect'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: CatppuccinMocha.teal,
-                      ),
-                    ),
-                  ),
-              ],
+                icon: const Icon(Icons.bluetooth_searching),
+                label: Text(
+                  ble.connectionState == BleConnectionState.scanning
+                      ? 'Scanning...'
+                      : 'Scan for Surfterm',
+                ),
+              ),
             ),
             const SizedBox(height: 16),
 
@@ -77,8 +75,8 @@ class ScanScreen extends StatelessWidget {
     final (icon, label, color) = switch (ble.connectionState) {
       BleConnectionState.disconnected => (
           Icons.bluetooth_disabled,
-          'Disconnected',
-          CatppuccinMocha.overlay1,
+          _hasScanned ? 'Scan complete' : 'Disconnected',
+          _hasScanned ? CatppuccinMocha.text : CatppuccinMocha.overlay1,
         ),
       BleConnectionState.scanning => (
           Icons.bluetooth_searching,
@@ -104,9 +102,16 @@ class ScanScreen extends StatelessWidget {
           children: [
             Icon(icon, color: color, size: 32),
             const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(color: color, fontSize: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(color: color, fontSize: 16)),
+                if (_hasScanned && ble.connectionState == BleConnectionState.disconnected)
+                  Text(
+                    '${ble.scanResults.length} devices found',
+                    style: const TextStyle(color: CatppuccinMocha.subtext0, fontSize: 12),
+                  ),
+              ],
             ),
           ],
         ),
@@ -115,45 +120,50 @@ class ScanScreen extends StatelessWidget {
   }
 
   Widget _buildScanResults(BuildContext context, BleService ble) {
-    if (ble.scanResults.isEmpty) {
+    // Only show devices with a name or strong signal (likely nearby)
+    final filtered = ble.scanResults.where((r) {
+      final hasName = r.device.platformName.isNotEmpty ||
+          r.advertisementData.advName.isNotEmpty;
+      return hasName || r.rssi > -50;
+    }).toList()
+      ..sort((a, b) => b.rssi.compareTo(a.rssi));
+
+    if (filtered.isEmpty) {
       return Center(
         child: Text(
           ble.connectionState == BleConnectionState.scanning
-              ? 'Looking for Surfterm devices...'
-              : 'Tap "Scan" to find Surfterm devices',
+              ? 'Looking for nearby devices...'
+              : _hasScanned
+                  ? 'No nearby devices found.\nMake sure BLE is ON on Mac (Cmd+Shift+B)'
+                  : 'Tap "Scan" to find Surfterm',
           style: const TextStyle(color: CatppuccinMocha.subtext0),
+          textAlign: TextAlign.center,
         ),
       );
     }
 
     return ListView.builder(
-      itemCount: ble.scanResults.length,
+      itemCount: filtered.length,
       itemBuilder: (context, index) {
-        final result = ble.scanResults[index];
+        final result = filtered[index];
         final device = result.device;
         final name = device.platformName.isNotEmpty
             ? device.platformName
-            : 'Unknown Device';
+            : result.advertisementData.advName.isNotEmpty
+                ? result.advertisementData.advName
+                : 'Unknown Device';
 
         return Card(
           child: ListTile(
-            leading:
-                const Icon(Icons.computer, color: CatppuccinMocha.lavender),
+            leading: const Icon(Icons.computer, color: CatppuccinMocha.lavender),
             title: Text(name, style: const TextStyle(color: CatppuccinMocha.text)),
             subtitle: Text(
-              device.remoteId.toString(),
+              'RSSI: ${result.rssi} dBm',
               style: const TextStyle(color: CatppuccinMocha.subtext0),
             ),
             trailing: FilledButton(
               onPressed: () async {
                 await ble.connect(device);
-                if (context.mounted && ble.isConnected) {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const SessionListScreen(),
-                    ),
-                  );
-                }
               },
               child: const Text('Connect'),
             ),

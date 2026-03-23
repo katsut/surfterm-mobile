@@ -62,6 +62,11 @@ class BleService extends ChangeNotifier {
 
   /// Start scanning for BLE devices advertising the Surfterm service.
   Future<void> scanForDevices() async {
+    // Stop any existing scan first
+    await FlutterBluePlus.stopScan();
+    await _scanSubscription?.cancel();
+    _scanSubscription = null;
+
     _connectionState = BleConnectionState.scanning;
     _scanResults = [];
     notifyListeners();
@@ -92,12 +97,7 @@ class BleService extends ChangeNotifier {
     _scanSubscription = FlutterBluePlus.onScanResults.listen(
       (results) {
         _scanResults = results;
-        for (final r in results) {
-          final services = r.advertisementData.serviceUuids.map((u) => u.toString()).join(', ');
-          final name = r.device.platformName.isNotEmpty ? r.device.platformName : r.advertisementData.advName;
-          debugPrint('BLE: Found: "$name" (${r.device.remoteId}) RSSI=${r.rssi} services=[$services]');
-        }
-        notifyListeners();
+        // Don't notify per-result; notify once at the end
       },
       onError: (Object error) {
         debugPrint('BLE scan error: $error');
@@ -105,10 +105,12 @@ class BleService extends ChangeNotifier {
     );
 
     await FlutterBluePlus.startScan(
-      timeout: const Duration(seconds: 15),
+      timeout: const Duration(seconds: 5),
     );
 
+    // Notify UI once after scan completes
     debugPrint('BLE: Scan complete. Found ${_scanResults.length} devices.');
+    notifyListeners();
     _connectionState = _connectedDevice != null
         ? BleConnectionState.connected
         : BleConnectionState.disconnected;
