@@ -1,41 +1,31 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../protocol.dart';
 import '../models/command.dart';
-import '../models/session.dart';
-import '../services/ble_service.dart';
+import '../providers/connection_provider.dart';
 import '../theme/catppuccin.dart';
 import '../widgets/session_card.dart';
-import 'scan_screen.dart';
-import 'session_detail_screen.dart';
 
-/// Displays all sessions grouped by layer.
-class SessionListScreen extends StatelessWidget {
+class SessionListScreen extends ConsumerWidget {
   const SessionListScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final ble = context.watch<BleService>();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final conn = ref.watch(connectionProvider);
 
-    if (!ble.isConnected) {
-      // Disconnected -- go back to scan.
+    if (!conn.isConnected) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (context.mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute<void>(builder: (_) => const ScanScreen()),
-          );
-        }
+        if (context.mounted) context.go('/scan');
       });
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final sessions = ble.sessions;
-    final pinned =
-        sessions.where((s) => s.layer == SessionLayer.pinned).toList();
-    final foreground =
-        sessions.where((s) => s.layer == SessionLayer.foreground).toList();
-    final background =
-        sessions.where((s) => s.layer == SessionLayer.background).toList();
+    final sessions = conn.sessions;
+    final pinned = sessions.where((s) => s.layer == SessionLayer.pinned).toList();
+    final foreground = sessions.where((s) => s.layer == SessionLayer.foreground).toList();
+    final background = sessions.where((s) => s.layer == SessionLayer.background).toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -44,42 +34,32 @@ class SessionListScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.bluetooth_disabled),
             tooltip: 'Disconnect',
-            onPressed: () async {
-              await ble.disconnect();
-            },
+            onPressed: () => conn.disconnect(),
           ),
         ],
       ),
       body: RefreshIndicator(
         color: CatppuccinMocha.mauve,
-        onRefresh: () => ble.readSessionList(),
+        onRefresh: () => conn.refreshSessions(),
         child: sessions.isEmpty
             ? const Center(
-                child: Text(
-                  'No active sessions',
-                  style: TextStyle(color: CatppuccinMocha.subtext0),
-                ),
+                child: Text('No active sessions',
+                    style: TextStyle(color: CatppuccinMocha.subtext0)),
               )
             : ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
                   if (pinned.isNotEmpty) ...[
                     _sectionHeader('Pinned'),
-                    ...pinned.map(
-                      (s) => _sessionCard(context, ble, s),
-                    ),
+                    ...pinned.map((s) => _card(context, conn, s)),
                   ],
                   if (foreground.isNotEmpty) ...[
                     _sectionHeader('Foreground'),
-                    ...foreground.map(
-                      (s) => _sessionCard(context, ble, s),
-                    ),
+                    ...foreground.map((s) => _card(context, conn, s)),
                   ],
                   if (background.isNotEmpty) ...[
                     _sectionHeader('Background'),
-                    ...background.map(
-                      (s) => _sessionCard(context, ble, s),
-                    ),
+                    ...background.map((s) => _card(context, conn, s)),
                   ],
                 ],
               ),
@@ -102,26 +82,14 @@ class SessionListScreen extends StatelessWidget {
     );
   }
 
-  Widget _sessionCard(
-    BuildContext context,
-    BleService ble,
-    SessionStatus session,
-  ) {
+  Widget _card(BuildContext context, dynamic conn, SessionStatus session) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: SessionCard(
         session: session,
         onTap: () {
-          // Switch to this session on Mac
-          ble.sendCommand(
-            BleCommand.switchSession(sessionId: session.id),
-          );
-          // Then open detail screen
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => SessionDetailScreen(sessionId: session.id),
-            ),
-          );
+          conn.sendCommand(Command.switchSession(sessionId: session.id));
+          context.push('/session/${session.id}');
         },
       ),
     );

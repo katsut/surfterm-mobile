@@ -1,26 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../models/command.dart';
-import '../models/session.dart';
-import '../services/ble_service.dart';
+import '../providers/connection_provider.dart';
 import '../theme/catppuccin.dart';
 import '../widgets/state_indicator.dart';
 
-/// Detail screen for a single session.
-class SessionDetailScreen extends StatefulWidget {
+class SessionDetailScreen extends ConsumerStatefulWidget {
   final String sessionId;
-
   const SessionDetailScreen({super.key, required this.sessionId});
 
   @override
-  State<SessionDetailScreen> createState() => _SessionDetailScreenState();
+  ConsumerState<SessionDetailScreen> createState() => _SessionDetailScreenState();
 }
 
-class _SessionDetailScreenState extends State<SessionDetailScreen> {
-  final _responseController = TextEditingController();
+class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
+  final _inputController = TextEditingController();
   bool _sending = false;
 
   // Voice
@@ -46,7 +43,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   void dispose() {
-    _responseController.dispose();
+    _inputController.dispose();
     _speech.stop();
     _tts.stop();
     super.dispose();
@@ -54,41 +51,35 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ble = context.watch<BleService>();
-    final session = ble.sessionById(widget.sessionId);
+    final conn = ref.watch(connectionProvider);
+    final session = conn.sessionById(widget.sessionId);
 
     if (session == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Session')),
         body: const Center(
-          child: Text(
-            'Session not found',
-            style: TextStyle(color: CatppuccinMocha.subtext0),
-          ),
+          child: Text('Session not found', style: TextStyle(color: CatppuccinMocha.subtext0)),
         ),
       );
     }
 
+    final lines = conn.terminalLinesFor(widget.sessionId);
+
     // Auto-read new terminal output if TTS is enabled
-    if (_ttsEnabled && ble.terminalLines.length > _lastSpokenLineCount) {
-      final newLines = ble.terminalLines.sublist(_lastSpokenLineCount);
-      _lastSpokenLineCount = ble.terminalLines.length;
+    if (_ttsEnabled && lines.length > _lastSpokenLineCount) {
+      final newLines = lines.sublist(_lastSpokenLineCount);
+      _lastSpokenLineCount = lines.length;
       final text = newLines.join(' ').trim();
-      if (text.isNotEmpty) {
-        _tts.speak(text);
-      }
+      if (text.isNotEmpty) _tts.speak(text);
     }
 
     return Scaffold(
       appBar: AppBar(
         title: Text(session.projectName),
         actions: [
-          // Voice mode toggle
           IconButton(
-            icon: Icon(
-              _voiceMode ? Icons.keyboard : Icons.mic,
-              color: _voiceMode ? CatppuccinMocha.green : null,
-            ),
+            icon: Icon(_voiceMode ? Icons.keyboard : Icons.mic,
+                color: _voiceMode ? CatppuccinMocha.green : null),
             tooltip: _voiceMode ? 'Text mode' : 'Voice mode',
             onPressed: () => setState(() {
               _voiceMode = !_voiceMode;
@@ -98,27 +89,21 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               }
             }),
           ),
-          // TTS toggle
           IconButton(
-            icon: Icon(
-              _ttsEnabled ? Icons.volume_up : Icons.volume_off,
-              color: _ttsEnabled ? CatppuccinMocha.blue : null,
-            ),
+            icon: Icon(_ttsEnabled ? Icons.volume_up : Icons.volume_off,
+                color: _ttsEnabled ? CatppuccinMocha.blue : null),
             tooltip: _ttsEnabled ? 'Mute output' : 'Read output aloud',
             onPressed: () => setState(() {
               _ttsEnabled = !_ttsEnabled;
-              _lastSpokenLineCount = ble.terminalLines.length;
+              _lastSpokenLineCount = conn.terminalLinesFor(widget.sessionId).length;
               if (!_ttsEnabled) _tts.stop();
             }),
           ),
-          // Switch session
           IconButton(
             icon: const Icon(Icons.swap_horiz),
             tooltip: 'Switch to this session',
             onPressed: () {
-              ble.sendCommand(
-                BleCommand.switchSession(sessionId: session.id),
-              );
+              conn.sendCommand(Command.switchSession(sessionId: session.id));
             },
           ),
         ],
@@ -128,131 +113,52 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Session info
-            _buildInfoCard(session),
-
+            _InfoCard(session: session),
             const SizedBox(height: 12),
-
-            // Terminal output
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: CatppuccinMocha.base,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: SingleChildScrollView(
-                  reverse: true,
-                  child: Text(
-                    ble.terminalLines.join('\n'),
-                    style: const TextStyle(
-                      fontFamily: 'Courier',
-                      fontSize: 12,
-                      color: CatppuccinMocha.text,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
+            Expanded(child: _TerminalView(lines: lines)),
             const SizedBox(height: 8),
-
-            // Input area — text or voice
             if (_voiceMode)
-              _buildVoiceInput(ble, session)
+              _VoiceInput(
+                voiceText: _voiceText,
+                isListening: _isListening,
+                sending: _sending,
+                onStartListening: _startListening,
+                onStopListening: _stopListening,
+                onSend: () => _sendVoice(conn),
+              )
             else
-              _buildTextInput(ble, session),
+              _TextInput(
+                controller: _inputController,
+                sending: _sending,
+                onSend: () => _sendText(conn),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTextInput(BleService ble, SessionStatus session) {
-    return Column(
-      children: [
-        TextField(
-          controller: _responseController,
-          style: const TextStyle(color: CatppuccinMocha.text),
-          decoration: const InputDecoration(
-            hintText: 'Send to terminal...',
-          ),
-          onSubmitted: (_) => _sendResponse(ble, session),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: _sending ? null : () => _sendResponse(ble, session),
-            icon: _sending
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: CatppuccinMocha.crust,
-                    ),
-                  )
-                : const Icon(Icons.send),
-            label: Text(_sending ? 'Sending...' : 'Send'),
-          ),
-        ),
-      ],
+  Future<void> _sendText(dynamic conn) async {
+    final text = _inputController.text.trim();
+    if (text.isEmpty) return;
+    setState(() => _sending = true);
+    await conn.sendCommand(
+      Command.respond(sessionId: widget.sessionId, payload: text),
     );
+    _inputController.clear();
+    if (mounted) setState(() => _sending = false);
   }
 
-  Widget _buildVoiceInput(BleService ble, SessionStatus session) {
-    return Column(
-      children: [
-        // Voice text preview
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: CatppuccinMocha.surface0,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            _voiceText.isEmpty ? 'Tap mic to speak...' : _voiceText,
-            style: TextStyle(
-              color: _voiceText.isEmpty
-                  ? CatppuccinMocha.subtext0
-                  : CatppuccinMocha.text,
-              fontSize: 16,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            // Mic button
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: _isListening ? _stopListening : _startListening,
-                icon: Icon(_isListening ? Icons.stop : Icons.mic),
-                label: Text(_isListening ? 'Stop' : 'Listen'),
-                style: FilledButton.styleFrom(
-                  backgroundColor:
-                      _isListening ? CatppuccinMocha.red : CatppuccinMocha.blue,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Send button
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: _voiceText.isEmpty || _sending
-                    ? null
-                    : () => _sendVoice(ble, session),
-                icon: const Icon(Icons.send),
-                label: const Text('Send'),
-              ),
-            ),
-          ],
-        ),
-      ],
+  Future<void> _sendVoice(dynamic conn) async {
+    if (_voiceText.isEmpty) return;
+    setState(() => _sending = true);
+    await conn.sendCommand(
+      Command.respond(sessionId: widget.sessionId, payload: _voiceText),
     );
+    setState(() {
+      _voiceText = '';
+      _sending = false;
+    });
   }
 
   Future<void> _startListening() async {
@@ -262,23 +168,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         setState(() => _isListening = false);
       },
     );
-
-    if (!available) {
-      debugPrint('Speech recognition not available');
-      return;
-    }
-
+    if (!available) return;
     setState(() {
       _isListening = true;
       _voiceText = '';
     });
-
     await _speech.listen(
-      onResult: (result) {
-        setState(() {
-          _voiceText = result.recognizedWords;
-        });
-      },
+      onResult: (result) => setState(() => _voiceText = result.recognizedWords),
       localeId: 'en_US',
     );
   }
@@ -287,58 +183,149 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     _speech.stop();
     setState(() => _isListening = false);
   }
+}
 
-  Future<void> _sendVoice(BleService ble, SessionStatus session) async {
-    if (_voiceText.isEmpty) return;
+class _InfoCard extends StatelessWidget {
+  final dynamic session;
+  const _InfoCard({required this.session});
 
-    setState(() => _sending = true);
-
-    await ble.sendCommand(
-      BleCommand.respond(sessionId: session.id, payload: _voiceText),
-    );
-
-    setState(() {
-      _voiceText = '';
-      _sending = false;
-    });
-  }
-
-  Widget _buildInfoCard(SessionStatus session) {
+  @override
+  Widget build(BuildContext context) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              session.projectName,
-              style: const TextStyle(
-                color: CatppuccinMocha.text,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            Text(session.projectName,
+                style: const TextStyle(
+                    color: CatppuccinMocha.text, fontSize: 16, fontWeight: FontWeight.w600)),
             StateIndicator(state: session.state),
           ],
         ),
       ),
     );
   }
+}
 
-  Future<void> _sendResponse(BleService ble, SessionStatus session) async {
-    final text = _responseController.text.trim();
-    if (text.isEmpty) return;
+class _TerminalView extends StatelessWidget {
+  final List<String> lines;
+  const _TerminalView({required this.lines});
 
-    setState(() => _sending = true);
-
-    await ble.sendCommand(
-      BleCommand.respond(sessionId: session.id, payload: text),
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: CatppuccinMocha.base,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: SingleChildScrollView(
+        reverse: true,
+        child: Text(
+          lines.join('\n'),
+          style: const TextStyle(fontFamily: 'Courier', fontSize: 12, color: CatppuccinMocha.text),
+        ),
+      ),
     );
+  }
+}
 
-    _responseController.clear();
+class _TextInput extends StatelessWidget {
+  final TextEditingController controller;
+  final bool sending;
+  final VoidCallback onSend;
+  const _TextInput({required this.controller, required this.sending, required this.onSend});
 
-    if (mounted) {
-      setState(() => _sending = false);
-    }
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        TextField(
+          controller: controller,
+          style: const TextStyle(color: CatppuccinMocha.text),
+          decoration: const InputDecoration(hintText: 'Send to terminal...'),
+          onSubmitted: (_) => onSend(),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: sending ? null : onSend,
+            icon: sending
+                ? const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: CatppuccinMocha.crust))
+                : const Icon(Icons.send),
+            label: Text(sending ? 'Sending...' : 'Send'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _VoiceInput extends StatelessWidget {
+  final String voiceText;
+  final bool isListening;
+  final bool sending;
+  final VoidCallback onStartListening;
+  final VoidCallback onStopListening;
+  final VoidCallback onSend;
+
+  const _VoiceInput({
+    required this.voiceText,
+    required this.isListening,
+    required this.sending,
+    required this.onStartListening,
+    required this.onStopListening,
+    required this.onSend,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: CatppuccinMocha.surface0,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            voiceText.isEmpty ? 'Tap mic to speak...' : voiceText,
+            style: TextStyle(
+              color: voiceText.isEmpty ? CatppuccinMocha.subtext0 : CatppuccinMocha.text,
+              fontSize: 16,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: isListening ? onStopListening : onStartListening,
+                icon: Icon(isListening ? Icons.stop : Icons.mic),
+                label: Text(isListening ? 'Stop' : 'Listen'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: isListening ? CatppuccinMocha.red : CatppuccinMocha.blue,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: voiceText.isEmpty || sending ? null : onSend,
+                icon: const Icon(Icons.send),
+                label: const Text('Send'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 }

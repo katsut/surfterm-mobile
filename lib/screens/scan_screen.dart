@@ -1,35 +1,29 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
-import '../services/ble_service.dart';
+import '../providers/connection_provider.dart';
+import '../services/connection_service.dart' show SurftermConnectionState, ConnectionService;
 import '../theme/catppuccin.dart';
-import 'session_list_screen.dart';
 
-/// BLE device scanning screen.
-class ScanScreen extends StatefulWidget {
+class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({super.key});
 
   @override
-  State<ScanScreen> createState() => _ScanScreenState();
+  ConsumerState<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends State<ScanScreen> {
+class _ScanScreenState extends ConsumerState<ScanScreen> {
   bool _hasScanned = false;
 
   @override
   Widget build(BuildContext context) {
-    final ble = context.watch<BleService>();
+    final conn = ref.watch(connectionProvider);
 
-    // Navigate to session list when connected
-    if (ble.isConnected) {
+    // Navigate to sessions when connected.
+    if (conn.isConnected) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (context.mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute<void>(
-              builder: (_) => const SessionListScreen(),
-            ),
-          );
-        }
+        if (context.mounted) context.go('/sessions');
       });
     }
 
@@ -39,57 +33,61 @@ class _ScanScreenState extends State<ScanScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Status
-            _buildStatusCard(ble),
+            _StatusCard(state: conn.connectionState, hasScanned: _hasScanned, hostCount: conn.discoveredHosts.length),
             const SizedBox(height: 16),
-
-            // Scan button
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: ble.connectionState == BleConnectionState.scanning
+                onPressed: conn.connectionState == SurftermConnectionState.discovering
                     ? null
                     : () async {
-                        await ble.scanForDevices();
+                        await conn.startDiscovery();
                         if (mounted) setState(() => _hasScanned = true);
                       },
-                icon: const Icon(Icons.bluetooth_searching),
+                icon: const Icon(Icons.wifi_find),
                 label: Text(
-                  ble.connectionState == BleConnectionState.scanning
+                  conn.connectionState == SurftermConnectionState.discovering
                       ? 'Scanning...'
                       : 'Scan for Surfterm',
                 ),
               ),
             ),
             const SizedBox(height: 16),
-
-            // Scan results
-            Expanded(child: _buildScanResults(context, ble)),
+            Expanded(child: _HostList(conn: conn)),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildStatusCard(BleService ble) {
-    final (icon, label, color) = switch (ble.connectionState) {
-      BleConnectionState.disconnected => (
-          Icons.bluetooth_disabled,
-          _hasScanned ? 'Scan complete' : 'Disconnected',
-          _hasScanned ? CatppuccinMocha.text : CatppuccinMocha.overlay1,
+class _StatusCard extends StatelessWidget {
+  final SurftermConnectionState state;
+  final bool hasScanned;
+  final int hostCount;
+
+  const _StatusCard({required this.state, required this.hasScanned, required this.hostCount});
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, label, color) = switch (state) {
+      SurftermConnectionState.disconnected => (
+          Icons.wifi_off,
+          hasScanned ? 'Scan complete' : 'Disconnected',
+          hasScanned ? CatppuccinMocha.text : CatppuccinMocha.overlay1,
         ),
-      BleConnectionState.scanning => (
-          Icons.bluetooth_searching,
+      SurftermConnectionState.discovering => (
+          Icons.wifi_find,
           'Scanning...',
           CatppuccinMocha.blue,
         ),
-      BleConnectionState.connecting => (
-          Icons.bluetooth_connected,
+      SurftermConnectionState.connecting => (
+          Icons.wifi,
           'Connecting...',
           CatppuccinMocha.yellow,
         ),
-      BleConnectionState.connected => (
-          Icons.bluetooth_connected,
+      SurftermConnectionState.connected => (
+          Icons.wifi,
           'Connected',
           CatppuccinMocha.green,
         ),
@@ -106,9 +104,9 @@ class _ScanScreenState extends State<ScanScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(label, style: TextStyle(color: color, fontSize: 16)),
-                if (_hasScanned && ble.connectionState == BleConnectionState.disconnected)
+                if (hasScanned && state == SurftermConnectionState.disconnected)
                   Text(
-                    '${ble.scanResults.length} devices found',
+                    '$hostCount devices found',
                     style: const TextStyle(color: CatppuccinMocha.subtext0, fontSize: 12),
                   ),
               ],
@@ -118,24 +116,23 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
   }
+}
 
-  Widget _buildScanResults(BuildContext context, BleService ble) {
-    // Only show devices with a name or strong signal (likely nearby)
-    final filtered = ble.scanResults.where((r) {
-      final hasName = r.device.platformName.isNotEmpty ||
-          r.advertisementData.advName.isNotEmpty;
-      return hasName || r.rssi > -50;
-    }).toList()
-      ..sort((a, b) => b.rssi.compareTo(a.rssi));
+class _HostList extends StatelessWidget {
+  final ConnectionService conn;
 
-    if (filtered.isEmpty) {
+  const _HostList({required this.conn});
+
+  @override
+  Widget build(BuildContext context) {
+    final hosts = conn.discoveredHosts;
+
+    if (hosts.isEmpty) {
       return Center(
         child: Text(
-          ble.connectionState == BleConnectionState.scanning
+          conn.connectionState == SurftermConnectionState.discovering
               ? 'Looking for nearby devices...'
-              : _hasScanned
-                  ? 'No nearby devices found.\nMake sure BLE is ON on Mac (Cmd+Shift+B)'
-                  : 'Tap "Scan" to find Surfterm',
+              : 'Tap "Scan" to find Surfterm',
           style: const TextStyle(color: CatppuccinMocha.subtext0),
           textAlign: TextAlign.center,
         ),
@@ -143,28 +140,16 @@ class _ScanScreenState extends State<ScanScreen> {
     }
 
     return ListView.builder(
-      itemCount: filtered.length,
+      itemCount: hosts.length,
       itemBuilder: (context, index) {
-        final result = filtered[index];
-        final device = result.device;
-        final name = device.platformName.isNotEmpty
-            ? device.platformName
-            : result.advertisementData.advName.isNotEmpty
-                ? result.advertisementData.advName
-                : 'Unknown Device';
-
+        final host = hosts[index];
         return Card(
           child: ListTile(
             leading: const Icon(Icons.computer, color: CatppuccinMocha.lavender),
-            title: Text(name, style: const TextStyle(color: CatppuccinMocha.text)),
-            subtitle: Text(
-              'RSSI: ${result.rssi} dBm',
-              style: const TextStyle(color: CatppuccinMocha.subtext0),
-            ),
+            title: Text(host.name, style: const TextStyle(color: CatppuccinMocha.text)),
+            subtitle: Text(host.detail, style: const TextStyle(color: CatppuccinMocha.subtext0)),
             trailing: FilledButton(
-              onPressed: () async {
-                await ble.connect(device);
-              },
+              onPressed: () => conn.connect(host.id),
               child: const Text('Connect'),
             ),
           ),

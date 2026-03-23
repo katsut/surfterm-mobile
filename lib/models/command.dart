@@ -1,44 +1,40 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-/// BLE command model matching Rust `BleCommand` enum.
-///
-/// Commands are serialized as JSON for transmission over BLE:
-/// ```json
-/// {"type": "respond", "session_id": "abc", "payload": "yes"}
-/// {"type": "switch_session", "session_id": "xyz"}
-/// {"type": "pin_session", "session_id": "s1"}
-/// ```
-sealed class BleCommand {
-  const BleCommand();
+/// Commands sent from mobile to desktop over WebSocket.
+sealed class Command {
+  const Command();
 
-  /// Send a response to a session waiting for input.
-  factory BleCommand.respond({
+  factory Command.respond({
     required String sessionId,
     required String payload,
   }) = RespondCommand;
 
-  /// Switch the active session.
-  factory BleCommand.switchSession({required String sessionId}) =
+  factory Command.switchSession({required String sessionId}) =
       SwitchSessionCommand;
 
-  /// Pin/unpin a session to the foreground layer.
-  factory BleCommand.pinSession({required String sessionId}) =
+  factory Command.pinSession({required String sessionId}) =
       PinSessionCommand;
 
-  /// Serialize to JSON map.
+  factory Command.ptyInput({
+    required String sessionId,
+    required Uint8List data,
+  }) = PtyInputCommand;
+
+  factory Command.resize({
+    required String sessionId,
+    required int cols,
+    required int rows,
+  }) = ResizeCommand;
+
   Map<String, dynamic> toJson();
 
-  /// Serialize to UTF-8 bytes for BLE transmission.
-  Uint8List toBytes() {
-    return Uint8List.fromList(utf8.encode(jsonEncode(toJson())));
-  }
+  String toJsonString() => jsonEncode(toJson());
 }
 
-final class RespondCommand extends BleCommand {
+final class RespondCommand extends Command {
   final String sessionId;
   final String payload;
-
   const RespondCommand({required this.sessionId, required this.payload});
 
   @override
@@ -49,9 +45,8 @@ final class RespondCommand extends BleCommand {
       };
 }
 
-final class SwitchSessionCommand extends BleCommand {
+final class SwitchSessionCommand extends Command {
   final String sessionId;
-
   const SwitchSessionCommand({required this.sessionId});
 
   @override
@@ -61,14 +56,45 @@ final class SwitchSessionCommand extends BleCommand {
       };
 }
 
-final class PinSessionCommand extends BleCommand {
+final class PinSessionCommand extends Command {
   final String sessionId;
-
   const PinSessionCommand({required this.sessionId});
 
   @override
   Map<String, dynamic> toJson() => {
         'type': 'pin_session',
         'session_id': sessionId,
+      };
+}
+
+final class PtyInputCommand extends Command {
+  final String sessionId;
+  final Uint8List data;
+  const PtyInputCommand({required this.sessionId, required this.data});
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'pty_input',
+        'session_id': sessionId,
+        'data': base64Encode(data),
+      };
+}
+
+final class ResizeCommand extends Command {
+  final String sessionId;
+  final int cols;
+  final int rows;
+  const ResizeCommand({
+    required this.sessionId,
+    required this.cols,
+    required this.rows,
+  });
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'resize',
+        'session_id': sessionId,
+        'cols': cols,
+        'rows': rows,
       };
 }
