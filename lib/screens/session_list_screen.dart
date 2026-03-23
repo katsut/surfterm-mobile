@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/command.dart';
 import '../models/session.dart';
 import '../services/ble_service.dart';
 import '../theme/catppuccin.dart';

@@ -247,17 +247,18 @@ class BleService extends ChangeNotifier {
   /// Send a command to the desktop via BLE.
   Future<void> sendCommand(BleCommand command) async {
     final char = _commandChar;
-    if (char == null) return;
+    if (char == null) {
+      debugPrint('BLE: Command char not found, cannot send');
+      return;
+    }
 
     try {
       final bytes = command.toBytes();
-      final chunks = _chunkProtocol.chunkData(bytes);
-
-      for (final chunk in chunks) {
-        await char.write(chunk.toBytes().toList(), withoutResponse: false);
-      }
+      debugPrint('BLE: Sending command: ${command.toJson()}');
+      await char.write(bytes.toList(), withoutResponse: false);
+      debugPrint('BLE: Command sent successfully');
     } catch (e) {
-      debugPrint('Failed to send command: $e');
+      debugPrint('BLE: Failed to send command: $e');
     }
   }
 
