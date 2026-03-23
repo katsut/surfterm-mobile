@@ -13,8 +13,8 @@ const String kSurftermServiceUuid = '5572f001-7846-4d32-a1a4-5f7a4e3b6c10';
 
 /// Characteristic UUIDs.
 const String kSessionListCharUuid = '5572f002-7846-4d32-a1a4-5f7a4e3b6c10';
-const String kStateNotifyCharUuid = '5572f002-7846-4d32-a1a4-5f7a4e3b6c10'; // same as session list (notify)
 const String kCommandCharUuid = '5572f003-7846-4d32-a1a4-5f7a4e3b6c10';
+const String kTerminalOutputCharUuid = '5572f004-7846-4d32-a1a4-5f7a4e3b6c10';
 
 /// BLE connection state.
 enum BleConnectionState {
@@ -39,8 +39,12 @@ class BleService extends ChangeNotifier {
 
   // GATT characteristics (discovered on connect).
   BluetoothCharacteristic? _sessionListChar;
-  BluetoothCharacteristic? _stateNotifyChar;
   BluetoothCharacteristic? _commandChar;
+  BluetoothCharacteristic? _terminalOutputChar;
+  StreamSubscription<List<int>>? _terminalOutputSubscription;
+
+  /// Terminal output buffer (last lines received).
+  final List<String> _terminalLines = [];
 
   final ChunkProtocol _chunkProtocol = const ChunkProtocol(mtu: 512);
 
@@ -52,6 +56,7 @@ class BleService extends ChangeNotifier {
   List<SessionStatus> get sessions => List.unmodifiable(_sessions);
 
   bool get isConnected => _connectionState == BleConnectionState.connected;
+  List<String> get terminalLines => List.unmodifiable(_terminalLines);
 
   // -- Scanning -------------------------------------------------------------
 
@@ -144,6 +149,7 @@ class BleService extends ChangeNotifier {
 
       await _discoverCharacteristics(device);
       await _subscribeToStateChanges();
+      await _subscribeToTerminalOutput();
       await readSessionList();
 
       notifyListeners();
@@ -174,8 +180,11 @@ class BleService extends ChangeNotifier {
   void _handleDisconnect() {
     _connectedDevice = null;
     _sessionListChar = null;
-    _stateNotifyChar = null;
     _commandChar = null;
+    _terminalOutputChar = null;
+    _terminalOutputSubscription?.cancel();
+    _terminalOutputSubscription = null;
+    _terminalLines.clear();
     _sessions = [];
     _connectionState = BleConnectionState.disconnected;
     notifyListeners();
@@ -192,10 +201,10 @@ class BleService extends ChangeNotifier {
           final uuid = char.uuid.toString().toLowerCase();
           if (uuid == kSessionListCharUuid.toLowerCase()) {
             _sessionListChar = char;
-          } else if (uuid == kStateNotifyCharUuid.toLowerCase()) {
-            _stateNotifyChar = char;
           } else if (uuid == kCommandCharUuid.toLowerCase()) {
             _commandChar = char;
+          } else if (uuid == kTerminalOutputCharUuid.toLowerCase()) {
+            _terminalOutputChar = char;
           }
         }
       }
@@ -241,6 +250,34 @@ class BleService extends ChangeNotifier {
       });
     } catch (e) {
       debugPrint('Failed to subscribe to state changes: $e');
+    }
+  }
+
+  Future<void> _subscribeToTerminalOutput() async {
+    final char = _terminalOutputChar;
+    if (char == null) {
+      debugPrint('BLE: Terminal output char not found');
+      return;
+    }
+
+    try {
+      await char.setNotifyValue(true);
+      _terminalOutputSubscription = char.lastValueStream.listen((value) {
+        try {
+          final text = utf8.decode(value);
+          // Append new output lines, keep last 100 lines
+          _terminalLines.addAll(text.split('\n'));
+          if (_terminalLines.length > 100) {
+            _terminalLines.removeRange(0, _terminalLines.length - 100);
+          }
+          notifyListeners();
+        } catch (e) {
+          debugPrint('BLE: Failed to decode terminal output: $e');
+        }
+      });
+      debugPrint('BLE: Subscribed to terminal output');
+    } catch (e) {
+      debugPrint('BLE: Failed to subscribe to terminal output: $e');
     }
   }
 

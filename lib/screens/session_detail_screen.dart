@@ -83,68 +83,60 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
             const SizedBox(height: 24),
 
-            // Response input (only for WaitingForInput)
-            if (session.state == SessionState.waitingForInput) ...[
-              const Text(
-                'Respond',
-                style: TextStyle(
-                  color: CatppuccinMocha.text,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _responseController,
-                maxLines: 4,
-                style: const TextStyle(color: CatppuccinMocha.text),
-                decoration: const InputDecoration(
-                  hintText: 'Type your response...',
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _sending ? null : () => _sendResponse(ble, session),
-                  icon: _sending
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: CatppuccinMocha.crust,
-                          ),
-                        )
-                      : const Icon(Icons.send),
-                  label: Text(_sending ? 'Sending...' : 'Send Response'),
-                ),
-              ),
-            ],
+            const SizedBox(height: 12),
 
-            if (session.state != SessionState.waitingForInput)
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _iconForState(session.state),
-                        size: 48,
-                        color: StateIndicator.colorForState(session.state),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _descriptionForState(session.state),
-                        style: const TextStyle(
-                          color: CatppuccinMocha.subtext0,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+            // Terminal output
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: CatppuccinMocha.base,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: SingleChildScrollView(
+                  reverse: true,
+                  child: Text(
+                    ble.terminalLines.join('\n'),
+                    style: const TextStyle(
+                      fontFamily: 'Courier',
+                      fontSize: 12,
+                      color: CatppuccinMocha.text,
+                    ),
                   ),
                 ),
               ),
+            ),
+
+            const SizedBox(height: 8),
+
+            // Terminal input
+            TextField(
+              controller: _responseController,
+              style: const TextStyle(color: CatppuccinMocha.text),
+              decoration: const InputDecoration(
+                hintText: 'Send to terminal...',
+              ),
+              onSubmitted: (_) => _sendResponse(ble, session),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _sending ? null : () => _sendResponse(ble, session),
+                icon: _sending
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: CatppuccinMocha.crust,
+                        ),
+                      )
+                    : const Icon(Icons.send),
+                label: Text(_sending ? 'Sending...' : 'Send'),
+              ),
+            ),
           ],
         ),
       ),
